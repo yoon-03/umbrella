@@ -357,3 +357,38 @@ body {
     position: relative;
     transition: transform 0.2s;
 }
+/* 이메일 분할 컨테이너 스타일 */
+.email-split-container {
+    display: flex; /* 내부 요소를 가로로 배열 */
+    align-items: center;
+    margin-bottom: 10px;
+}
+.email-split-container .login-input {
+    margin-bottom: 0;
+    flex-grow: 1;
+}
+.email-split-container span {
+    margin: 0 5px;
+    color: #555;
+    font-size: 16px;
+}
+/* 2단계 인증 체크박스 스타일 */
+.two-factor-check {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    margin-bottom: 15px;
+    padding: 5px 0;
+}
+.two-factor-check label {
+    color: #555;
+    font-size: 14px;
+    cursor: pointer;
+    text-align: left;
+}
+.two-factor-check input[type="checkbox"] {
+    margin-right: 10px;
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}

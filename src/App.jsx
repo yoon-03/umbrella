@@ -38,7 +38,15 @@ const MapComponent = () => {
   
   // 인증 폼 상태
   const [isSignup, setIsSignup] = useState(false); 
-  const [loginForm, setLoginForm] = useState({ email: '', password: '' });
+  const [loginForm, setLoginForm] = useState({ 
+    email: '',
+    password: '',
+    passwordConfirm: '',
+    phone: '',
+    emailPrefix: '',
+    emailDomain: 'gmail.com',
+    isTwoFactorEnabled: false
+  });
   const [authError, setAuthError] = useState('');
   
   // 컴포넌트 마운트 및 토큰 변경 시 사용자 정보 및 즐겨찾기 가져오기
@@ -104,11 +112,39 @@ const MapComponent = () => {
         return setAuthError('비밀번호는 6자 이상이어야 합니다.');
     }
 
+    if (isSignupMode) {
+      // 회원가입 모드 유효성 검사 및 페이로드 구성
+      // 비밀번호 일치 확인
+      if (loginForm.password !== loginForm.passwordConfirm) {
+        return setAuthError('비밀번호와 비밀번호 확인이 일치하지 않습니다.');
+      }
+
+      // 이메일 형식 확인 및 구성
+      const finalEmail = `${loginForm.emailPrefix}@${loginForm.emailDomain}`;
+      if (!loginForm.emailPrefix || !loginForm.emailDomain || !finalEmail.includes('@')) {
+        return setAuthError('이메일 아이디와 도메인을 정확히 입력해주세요.');
+      }
+
+      // 핸드폰 번호 확인 (10~11자리 숫자 확인)
+      const phoneRegex = /^\{10,11}$/;
+      if (!phoneRegex.test(loginForm.phone)) {
+        return setAuthError('유효한 핸드폰 번호(10~11자리 숫자)를 입력해주세요.');
+      }
+
+      // 페이로드에 phone 및 isTwoFactorEnabled 포함
+      payload = {
+        email: finalEmail,
+        password: loginForm.password,
+        phone: loginForm.phone,
+        isTwoFactorEnabled: loginForm.isTwoFactorEnabled,
+      };
+    }
+
     try {
       const response = await fetch(BACKEND_URL + endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(loginForm),
+        body: JSON.stringify(isSignupMode ? payload : loginForm),
       });
 
       const data = await response.json();
@@ -116,7 +152,8 @@ const MapComponent = () => {
       if (response.ok) {
         localStorage.setItem('userToken', data.token);
         setUserToken(data.token);
-        setLoginForm({ email: '', password: '' });
+        const initialFormState = { email: '', password: '', passwordConfirm: '', phone: '', emailPrefix: '', emailDomain: 'gmail.com', isTwoFactorEnabled: false }; 
+        setLoginForm(initialFormState);
         setIsSignup(false);
         setAuthError(isSignupMode ? '회원가입 성공!' : '로그인 성공!');
         alert(isSignupMode ? '회원가입이 완료되었습니다.' : '로그인 되었습니다.');
@@ -141,7 +178,12 @@ const MapComponent = () => {
 
   // 입력 필드 변경 핸들러
   const handleInputChange = (e) => {
-    setLoginForm({ ...loginForm, [e.target.name]: e.target.value });
+    const { name, value, type, checked } = e.target;
+
+    setLoginForm(prevForm => ({ 
+      ...prevForm,
+      [name]: type === 'checkbox' ? checked : value // 타입에 따라 value 또는 checked 사용 
+    }));
     setAuthError('');
   };
   
@@ -150,7 +192,29 @@ const MapComponent = () => {
       alert(`소셜 로그인: ${providerName} 연동을 위해서는 백엔드 서버에서 OAuth 처리가 필요합니다.`);
   };
 
-
+  const EmailInputFields = () => (
+    <div className="email-split-container">
+      <input
+        type="text"
+        name="emailPrefix"
+        placeholder="이메일 아이디"
+        value={loginForm.emailPrefix}
+        onChange={handleInputChange}
+        className="login-input"
+        style={{ width: '45%', marginRight: '10px' }}
+      />
+      <span style={{ marginRight: '10px', color: '#555' }}>@</span>
+      <input
+        type="text"
+        name="emailDomain"
+        placeholder="gmail.com"
+        value={loginForm.emailDomain}
+        onChange={handleInputChange}
+        className="login-input"
+        style={{ width: 'calc(55% - 20px)' }}
+      />
+    </div>
+  )
   // 즐겨찾기 추가 함수 (DB 연동)
   const handleAddFavorite = async (station) => {
     if (!isLoggedIn) {
@@ -260,22 +324,67 @@ const MapComponent = () => {
             <div className="login-form-container">
               <h3>{isSignup ? '회원가입' : '로그인'}</h3>
               {authError && <p className="auth-error">{authError}</p>}
-              <input 
-                type="email" 
-                name="email" 
-                placeholder="이메일" 
-                value={loginForm.email} 
-                onChange={handleInputChange} 
-                className="login-input"
-              />
-              <input 
-                type="password" 
-                name="password" 
-                placeholder="비밀번호 (6자 이상)" 
-                value={loginForm.password} 
-                onChange={handleInputChange} 
-                className="login-input"
-              />
+              {isSignup ? (
+                <>
+                  <EmailInputFields/>
+                  
+                  <input 
+                    type="password" 
+                    name="password" 
+                    placeholder="비밀번호 (6자 이상)" 
+                    value={loginForm.password} 
+                    onChange={handleInputChange} 
+                    className="login-input"
+                  />
+                  <input 
+                    type="password" 
+                    name="passwordconfirm" 
+                    placeholder="비밀번호 확인" 
+                    value={loginForm.passwordConfirm} 
+                    onChange={handleInputChange} 
+                    className="login-input"
+                  />
+                  <input
+                    type="tel"
+                    name="phone"
+                    placeholder="핸드폰 번호(숫자만 입력)"
+                    value={loginForm.phone}
+                    onChange={handleInputChange}
+                    className="login-input"
+                  />
+                  <div className="two-factor-check">
+                    <input
+                      type="checkbox"
+                      name="isTwoFactorEnabled"
+                      id="twoFactor"
+                      checked={loginForm.isTwoFactorEnabled}
+                      onChange={handleInputChange}
+                    />
+                    <lable htmlFor="twoFactor">
+                      2단계 인증 활성화
+                    </lable>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <input
+                    type="email"
+                    name="email"
+                    placeholder="아이디"
+                    value={loginForm.email}
+                    onChange={handleInputChange}
+                    className="login-input"
+                  />
+                  <input 
+                    type="password" 
+                    name="password" 
+                    placeholder="비밀번호" 
+                    value={loginForm.password} 
+                    onChange={handleInputChange} 
+                    className="login-input"
+                  />
+                </>
+              )}
               <button 
                 className="action-button primary" 
                 onClick={() => handleAuth(isSignup)}
