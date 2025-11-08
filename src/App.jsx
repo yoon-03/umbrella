@@ -1,15 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback} from 'react';
 import './App.css'; 
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap} from 'react-leaflet';
 import 'leaflet/dist/leaflet.css'; 
 import L from 'leaflet';
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 
-import { FaPlus, FaStar, FaLock, FaUser, FaGoogle, FaHome, FaQrcode } from 'react-icons/fa'; 
+import { FaStar, FaLock, FaUser, FaGoogle, FaHome, FaQrcode, FaCheck, FaMinusCircle} from 'react-icons/fa'; 
 
 // --- 백엔드 설정 ---
-const BACKEND_URL = 'http://localhost:5000';
+const BACKEND_URL = 'http://localhost:4000';
 // -----------------
 
 let DefaultIcon = L.icon({
@@ -18,18 +18,74 @@ let DefaultIcon = L.icon({
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
-// 예시 대여소 데이터
-const stations = [
-  { name: '미추홀구 대여소', position: [37.45, 126.65] },
-  { name: '강남역 대여소', position: [37.498, 127.02] },
-  { name: '신도림역 대여소', position: [37.508, 126.88] },
-];
+//대여소 조회를 위한 컴포넌트
+function MapSearchCenterer({ position }) {
+    const map = useMap();
+    useEffect(() => {
+        if (position) {
+            // 해당 위치로 지도의 중심을 이동하고 부드러운 애니메이션을 적용 (Zoom: 17)
+            map.flyTo(position, 17); 
+        }
+    }, [position, map]);
+    return null;
+}
 
 const MapComponent = () => {
   // 지도 및 탭 상태
-  const [mapCenter, setMapCenter] = useState(stations[0].position);
+  const [stations, setStations] = useState([]);
+  // const [loading, setLoading] = useState(true);
+  const [mapCenter, setMapCenter] = useState([37.4481, 126.657]); //초기 지도 인하공전으로
   const [activeTab, setActiveTab] = useState('map');
   const [favorites, setFavorites] = useState([]);
+  //대여소 조회를 위해 추가
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+    // 검색 결과 클릭 시 해당 위치로 지도를 이동시키기 위해 추가
+  const [centerPosition, setCenterPosition] = useState(null);
+  //즐겨찾기 삭제를 위해 추가
+  const [isDeleteMode, setIsDeleteMode] = useState(false);
+
+  const toggleDeleteMode = () => {
+    setIsDeleteMode(prev => !prev);
+};
+//즐겨찾기 삭제
+const handleRemoveFavorite = async (station) => {
+    const stationId = station.station_id; 
+
+    if (!isLoggedIn) {
+        alert("로그인 후 이용 가능합니다.");
+        return;
+    }
+    
+    // station.name은 없으면 station.station_id를 대신 사용
+    if (!window.confirm(`[${station.name || stationId}]을(를) 정말로 즐겨찾기에서 삭제하시겠습니까?`)) {
+        return;
+    }
+
+    try {
+        // ✅ 쿼리 파라미터로 stationId 변수를 사용하여 요청
+        const res = await fetch(`${BACKEND_URL}/api/favorites?station_id=${stationId}`, {
+            method: "DELETE",
+            headers: {
+                Authorization: `Bearer ${userToken}`,
+            },
+        });
+
+        if (res.ok) {
+            alert("즐겨찾기 삭제 완료!");
+            // 삭제 후 목록을 새로고침합니다.
+            fetchFavorites(); 
+        } else {
+            const data = await res.json();
+            alert(data.error || "삭제 실패");
+        }
+    } catch (error) {
+        console.error('Favorite remove error:', error);
+        alert("서버 통신 오류");
+    }
+};
+
+
 
   // --- JWT 인증 상태 ---
   const [userToken, setUserToken] = useState(localStorage.getItem('userToken'));
@@ -41,29 +97,17 @@ const MapComponent = () => {
   const [loginForm, setLoginForm] = useState({ 
     email: '',
     password: '',
+    nickname: '',
     passwordConfirm: '',
-    phone: '',
+    phonenumber: '',
     emailPrefix: '',
     emailDomain: 'gmail.com',
     isTwoFactorEnabled: false
   });
   const [authError, setAuthError] = useState('');
   
-  // 컴포넌트 마운트 및 토큰 변경 시 사용자 정보 및 즐겨찾기 가져오기
-  useEffect(() => {
-    if (userToken) {
-      fetchUserInfo();
-      fetchFavorites();
-    } else {
-      setUserInfo(null);
-      setFavorites([]);
-    }
-  }, [userToken]);
-
-  // --- API 통신 함수 ---
-
   // 사용자 정보 가져오기
-  const fetchUserInfo = async () => {
+  const fetchUserInfo = useCallback(async () => {
     try {
       const response = await fetch(`${BACKEND_URL}/api/user`, {
         headers: { 'Authorization': `Bearer ${userToken}` },
@@ -78,81 +122,123 @@ const MapComponent = () => {
       console.error('Failed to fetch user info:', error);
       handleLogout();
     }
-  };
+  }, [userToken]);
 
   // 즐겨찾기 목록 가져오기
-  const fetchFavorites = async () => {
-      if (!userToken) return;
-      try {
-        const response = await fetch(`${BACKEND_URL}/api/favorites`, {
-          headers: { 'Authorization': `Bearer ${userToken}` },
+  const fetchFavorites = useCallback(async () => {
+    try {
+        const res = await fetch(`${BACKEND_URL}/api/favorites`, {
+            headers: { Authorization: `Bearer ${userToken}` },
         });
-        if (response.ok) {
-          const data = await response.json();
-          // DB에서 가져온 데이터를 React state 형식에 맞게 변환
-          const formattedFavorites = data.map(fav => ({
-              name: fav.station_name, 
-              position: [fav.latitude, fav.longitude]
-          }));
-          setFavorites(formattedFavorites);
-        } else if (response.status !== 401) {
-          console.error('Failed to fetch favorites');
-        }
-      } catch (error) {
-        console.error('Fetch Favorites Error:', error);
+
+        const data = await res.json();
+        
+        // 🚨 ✅ 수정: 백엔드에서 받은 키 이름(station_id, station_name 등)을 정확히 사용합니다.
+        const formattedFavorites = data.map(fav => ({
+            station_id: fav.station_id,       // <-- 이 값이 꼭 있어야 함
+            name: fav.station_name,         // name으로 통일
+            position: [fav.latitude, fav.longitude],
+            // location: fav.station_location, // location이 백엔드에서 오지 않을 경우 삭제
+        }));
+
+        setFavorites(formattedFavorites);
+    } catch (error) {
+        console.error("즐겨찾기 로딩 오류:", error);
+        setFavorites([]); // 오류 시 목록 비우기
+    }
+}, [userToken]);
+
+
+  useEffect(() => {
+    if (userToken) {
+      fetchUserInfo();
+      fetchFavorites();
+    } else {
+      setUserInfo(null);
+      setFavorites([]);
+    }
+  }, [userToken, fetchUserInfo, fetchFavorites]);
+
+  // ✅ 최초 렌더링 시 대여소(station) 데이터 불러오기
+  useEffect(() => {
+    const fetchStations = async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/stations`);
+        const data = await res.json();
+
+        const formatted = data.map(st => ({
+          station_id: st.station_id,
+          name: st.name,
+          location: st.station_location,
+          position: [st.lat, st.lng], 
+          region : st.region,
+        }));
+
+        setStations(formatted);
+        // setLoading(false);
+      } catch (err) {
+        console.error('Station fetch error:', err);
       }
   };
+
+  fetchStations();
+}, []); // ✅ 빈 배열 → 컴포넌트가 처음 렌더링될 때 1회만 실행
+
 
   // 로그인 및 회원가입 처리
   const handleAuth = async (isSignupMode) => {
     setAuthError('');
     const endpoint = isSignupMode ? '/api/auth/signup' : '/api/auth/login';
     
+    // ✅ 1. 함수 상단에 finalPayload 변수를 선언합니다.
+    let finalPayload = loginForm; // 기본값은 loginForm으로 설정 (로그인 모드)
+
     if (loginForm.password.length < 6) {
         return setAuthError('비밀번호는 6자 이상이어야 합니다.');
     }
 
     if (isSignupMode) {
-      // 회원가입 모드 유효성 검사 및 페이로드 구성
-      // 비밀번호 일치 확인
-      if (loginForm.password !== loginForm.passwordConfirm) {
-        return setAuthError('비밀번호와 비밀번호 확인이 일치하지 않습니다.');
-      }
+        // ... (유효성 검사 로직은 그대로) ...
+        if (loginForm.password !== loginForm.passwordConfirm) {
+            return setAuthError('비밀번호와 비밀번호 확인이 일치하지 않습니다.');
+        }
+        const finalEmail = `${loginForm.emailPrefix}@${loginForm.emailDomain}`;
+        if (!loginForm.emailPrefix || !loginForm.emailDomain || !finalEmail.includes('@')) {
+            return setAuthError('이메일 아이디와 도메인을 정확히 입력해주세요.');
+        }
+        const phoneRegex = /^\d{10,11}$/;
+        if (!phoneRegex.test(loginForm.phonenumber)) {
+            return setAuthError('유효한 핸드폰 번호(10~11자리 숫자)를 입력해주세요.');
+        }
 
-      // 이메일 형식 확인 및 구성
-      const finalEmail = `${loginForm.emailPrefix}@${loginForm.emailDomain}`;
-      if (!loginForm.emailPrefix || !loginForm.emailDomain || !finalEmail.includes('@')) {
-        return setAuthError('이메일 아이디와 도메인을 정확히 입력해주세요.');
-      }
+        if(loginForm.nickname.trim()< 1 || loginForm.nickname.trim().Length >20){
+            return setAuthError('닉네임은 1자 이상, 20자 이하로 작성해주세요.');
+        }
 
-      // 핸드폰 번호 확인 (10~11자리 숫자 확인)
-      const phoneRegex = /^\{10,11}$/;
-      if (!phoneRegex.test(loginForm.phone)) {
-        return setAuthError('유효한 핸드폰 번호(10~11자리 숫자)를 입력해주세요.');
-      }
-
-      // 페이로드에 phone 및 isTwoFactorEnabled 포함
-      payload = {
-        email: finalEmail,
-        password: loginForm.password,
-        phone: loginForm.phone,
-        isTwoFactorEnabled: loginForm.isTwoFactorEnabled,
-      };
-    }
+        // ✅ 2. 회원가입 모드일 때만 finalPayload를 구성된 payload로 덮어씁니다.
+        finalPayload = {
+            email: finalEmail,
+            password: loginForm.password,
+            nickname: loginForm.nickname,
+            phonenumber: loginForm.phonenumber,
+            isTwoFactorEnabled: loginForm.isTwoFactorEnabled,
+        };
+    } // 👈 'finalPayload'는 if 블록 밖에서도 유효함
 
     try {
-      const response = await fetch(BACKEND_URL + endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(isSignupMode ? payload : loginForm),
-      });
+        const response = await fetch(BACKEND_URL + endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            // 🚨 3. finalPayload를 사용합니다.
+            body: JSON.stringify(finalPayload), 
+        });
 
-      const data = await response.json();
+        const data = await response.json();
 
       if (response.ok) {
         localStorage.setItem('userToken', data.token);
         setUserToken(data.token);
-        const initialFormState = { email: '', password: '', passwordConfirm: '', phone: '', emailPrefix: '', emailDomain: 'gmail.com', isTwoFactorEnabled: false }; 
+        const initialFormState = { email: '', password: '', passwordConfirm: '', nickname: '', phonenumber: '', emailPrefix: '', emailDomain: 'gmail.com', isTwoFactorEnabled: false }; 
         setLoginForm(initialFormState);
         setIsSignup(false);
         setAuthError(isSignupMode ? '회원가입 성공!' : '로그인 성공!');
@@ -192,7 +278,7 @@ const MapComponent = () => {
       alert(`소셜 로그인: ${providerName} 연동을 위해서는 백엔드 서버에서 OAuth 처리가 필요합니다.`);
   };
 
-  const EmailInputFields = () => (
+  const EmailInputFields = ({ loginForm, handleInputChange }) => (
     <div className="email-split-container">
       <input
         type="text"
@@ -217,36 +303,33 @@ const MapComponent = () => {
   )
   // 즐겨찾기 추가 함수 (DB 연동)
   const handleAddFavorite = async (station) => {
-    if (!isLoggedIn) {
-        alert("즐겨찾기 추가는 로그인 후 이용 가능합니다.");
-        return;
+  if (!isLoggedIn) {
+    alert("즐겨찾기는 로그인 후 이용 가능합니다.");
+    return;
+  }
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/favorites`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${userToken}`,
+      },
+      body: JSON.stringify({ station_id: station.station_id }),
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+      alert("즐겨찾기 추가 완료!");
+      fetchFavorites();
+    } else {
+      alert(data.error);
     }
-    
-    try {
-        const response = await fetch(`${BACKEND_URL}/api/favorites`, {
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${userToken}`
-            },
-            body: JSON.stringify({
-                stationName: station.name,
-                position: station.position
-            }),
-        });
-        
-        const data = await response.json();
-        
-        if (response.ok) {
-            alert(data.message);
-            fetchFavorites(); // 목록 새로고침
-        } else {
-            alert(`추가 실패: ${data.error}`);
-        }
-    } catch (error) {
-        alert("서버 연결 오류로 즐겨찾기를 추가할 수 없습니다.");
-    }
-  };
+  } catch (error) {
+    console.error(error);
+    alert("서버 오류");
+  }
+};
 
   // 즐겨찾기 목록 항목 클릭 시 지도 위치로 이동하는 함수
   const handleGoToFavorite = (position) => {
@@ -258,21 +341,95 @@ const MapComponent = () => {
   const handleTabToggle = (tabName) => {
       if (activeTab === tabName) {
           setActiveTab('map');
+          if (tabName === 'favorites') {
+            setIsDeleteMode(false);
+        }
       } else {
           setActiveTab(tabName);
       }
   };
 
+  //검색 버튼 핸들러
+    const handleSearch = async () => {
+        if (!searchTerm.trim()) {
+            setSearchResults([]);
+            return;
+        }
 
+        try {
+            // 백엔드 API 호출 시 region 쿼리 파라미터 전달
+            const url = `${BACKEND_URL}/api/stations?region=${encodeURIComponent(searchTerm.trim())}`;
+            const res = await fetch(url);
+            
+            if (!res.ok) {
+                throw new Error('검색 오류 발생');
+            }
+            
+            const data = await res.json();
+            
+            // station_id와 name, 그리고 위치 정보만 추출
+            const formattedResults = data.map(st => ({
+                station_id: st.station_id,
+                name: st.name,
+                position: [st.lat, st.lng],
+            }));
+            
+            setSearchResults(formattedResults);
+            
+            // 검색 결과가 있다면 첫 번째 결과로 지도를 이동
+            if (formattedResults.length > 0) {
+                setCenterPosition(formattedResults[0].position);
+            }
+            
+        } catch (err) {
+            console.error('Search error:', err);
+            setSearchResults([]);
+        }
+    };
+    //검색 결과 클릭 핸들러
+  const handleResultClick = (station) => {
+        setCenterPosition(station.position);
+        // 검색 결과를 숨기거나, 필요하다면 검색 결과 리스트를 닫는 추가 로직 구현 가능
+    };
   return (
     <div className="map-container">
       {activeTab === 'map' && (
       <header className="header">
         <div className="search-bar">
-          <span className="rental-number" style={{whiteSpace: 'nowrap'}}>대여소 번호</span>
-          <input type="text" placeholder="원하시는 지역이 어디신가요?" />
+          <span className="rental-number" style={{whiteSpace: 'nowrap'}}>지역검색(동)</span>
+          <input 
+              type="text"
+              placeholder="원하시는 지역이 어디신가요?" 
+              value={searchTerm} 
+              onChange={(e) => setSearchTerm(e.target.value)} 
+              onKeyPress={(e) => { // Enter 키 입력 시 검색 실행
+                    if (e.key === 'Enter') {
+                        handleSearch();
+                    }
+                  }}
+                />
+                  {/*검색버튼*/}
+                  <button className="search-button" onClick={handleSearch}>검색</button>
         </div>
       </header>)}
+
+      {/*검색결과 */}
+      {activeTab === 'map' && searchResults.length > 0 && (
+          <div className="search-results-list">
+              <h3>지역 검색 결과 ({searchResults.length}건)</h3>
+              <ul>
+                  {searchResults.map(station => (
+                      <li 
+                          key={station.station_id} 
+                          onClick={() => handleResultClick(station)} // 클릭 시 지도 이동
+                          style={{ cursor: 'pointer', padding: '8px 0', borderBottom: '1px solid #eee' }}
+                      >
+                        {station.name}
+                      </li>
+                  ))}
+              </ul>
+          </div>
+      )}
 
       {/* activeTab 값에 따라 다른 컴포넌트를 렌더링합니다. */}
       {activeTab === 'map' && (
@@ -286,16 +443,23 @@ const MapComponent = () => {
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
+          {/* 검색 후 지도이동 */}
+          <MapSearchCenterer position={centerPosition} />
+
           {stations.map((station) => (
-            <Marker key={station.name} position={station.position}>
+            <Marker key={station.station_id} position={station.position}>
               <Popup>
-                {station.name}
+                <b>{station.name}</b>
+                <br/>
+                {station.location}
+                <br />
+                {station.region}동
                 <br />
                 <button onClick={() => handleAddFavorite(station)}>
-                  즐겨찾기 추가 (DB)
+                    즐겨찾기 추가 (DB)
                 </button>
               </Popup>
-            </Marker>
+           </Marker>
           ))}
         </MapContainer>
       )}
@@ -316,7 +480,7 @@ const MapComponent = () => {
             // --- 로그인 상태 ---
             <div className="login-status-box logged-in">
               <p>로그인되었습니다.</p>
-              <p><strong>{userInfo?.email || '알 수 없음'}</strong> 님</p>
+              <p><strong>{userInfo?.nickname || '알 수 없음'}</strong> 님</p>
               <button className="action-button secondary" onClick={handleLogout}>로그아웃</button>
             </div>
           ) : (
@@ -326,8 +490,11 @@ const MapComponent = () => {
               {authError && <p className="auth-error">{authError}</p>}
               {isSignup ? (
                 <>
-                  <EmailInputFields/>
                   
+                  <EmailInputFields
+                    loginForm={loginForm} 
+                    handleInputChange={handleInputChange}
+                  />
                   <input 
                     type="password" 
                     name="password" 
@@ -338,17 +505,25 @@ const MapComponent = () => {
                   />
                   <input 
                     type="password" 
-                    name="passwordconfirm" 
+                    name="passwordConfirm" 
                     placeholder="비밀번호 확인" 
                     value={loginForm.passwordConfirm} 
                     onChange={handleInputChange} 
                     className="login-input"
                   />
                   <input
+                    type="nickname"
+                    name="nickname"
+                    placeholder="닉네임"
+                    value={loginForm.nickname}
+                    onChange={handleInputChange}
+                    className="login-input"
+                  />
+                  <input
                     type="tel"
-                    name="phone"
+                    name="phonenumber"
                     placeholder="핸드폰 번호(숫자만 입력)"
-                    value={loginForm.phone}
+                    value={loginForm.phonenumber}
                     onChange={handleInputChange}
                     className="login-input"
                   />
@@ -406,7 +581,7 @@ const MapComponent = () => {
             </div>
           )}
           <p style={{marginTop: '20px', color: '#999', fontSize: '12px', textAlign: 'center'}}>
-              * 현재 Node.js 서버(5000포트)와 연동됩니다.
+              * 현재 Node.js 서버(4000포트)와 연동됩니다.
           </p>
         </div>
       )}
@@ -415,37 +590,75 @@ const MapComponent = () => {
         <div className='favorites-page'>
           <div className='favorites-header'>
             <h3>즐겨찾기 목록 ({isLoggedIn ? 'DB 연동' : '로그인 필요'})</h3>
-            <div className='new-list'>
-              <FaPlus/> 새 리스트 만들기
+            {/* 즐겨찾기 창에서 나갈 시 즐겨찾기 삭제모드 풀리게 */}
+            <button 
+                onClick={() => handleTabToggle('favorites')} 
+                style={{ background: 'none', border: 'none', fontSize: '1.5em', cursor: 'pointer', marginLeft: 'auto' }}
+            >
+                &times; 
+            </button>
+            <div className="new-list" onClick={toggleDeleteMode}>
+                {/* isDeleteMode 상태에 따라 아이콘과 텍스트 변경 */}
+                {isDeleteMode ? 
+                    (<>
+                        <FaCheck style={{ color: 'green' }}/> 삭제 모드 종료
+                    </>) :
+                    (<>
+                        <FaMinusCircle style={{ color: 'red' }}/> 즐겨찾기 삭제
+                    </>)
+                }
             </div>
           </div>
           <div className='favorites-list-container'>
             {favorites.length > 0 ? (
-              favorites.map((station) => (
-                <div key={station.name} className='favorite-item' onClick={() => handleGoToFavorite(station.position)}>
-                  <div className='item-icon-wrapper'>
-                    <FaStar className='item-icon'/>
+      <ul>
+          {favorites.map((station) => (
+              // ✅ 기존 div를 li로 변경
+              <li 
+                  key={station.station_id} 
+                  className='favorite-item-wrapper'
+              >
+                  {/* 1. 즐겨찾기 정보 (클릭 시 지도 이동) */}
+                  {/* isDeleteMode가 아닐 때만 클릭하여 지도 이동 */}
+                  <div 
+                      className='favorite-item' 
+                      onClick={() => !isDeleteMode && handleGoToFavorite(station.position)}
+                      style={{ cursor: isDeleteMode ? 'default' : 'pointer' }}
+                  >
+                      <div className='item-icon-wrapper'>
+                          <FaStar className='item-icon'/>
+                      </div>
+                      <div className='item-details'>
+                          {/* station.name이 아닌 station_name을 사용해야 할 수 있습니다 (DB 조회 결과에 따라 다름) */}
+                          <span className='item-name'>{station.station_name || station.name}</span> 
+                          <div className='item-sub-info'>
+                              <FaLock/> {/* 임시 자물쇠 아이콘 */}
+                          </div>
+                      </div>
                   </div>
-                  <div className='item-details'>
-                    <span className='item-name'>{station.name}</span>
-                    <div className='item-sub-info'>
-                      <FaLock/>
-                    </div>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p>{isLoggedIn ? '현재 즐겨찾기에 추가된 대여소가 없습니다.' : '즐겨찾기 목록을 보려면 로그인해 주세요.'}</p>
-            )}
+                
+                {/* 2. ✅ 새로 추가: 삭제 모드일 때만 삭제 버튼 표시 */}
+                {isDeleteMode && (
+                    <button 
+                        className="delete-button" 
+                        // 즐겨찾기 삭제 핸들러 연결
+                        onClick={() => handleRemoveFavorite(station)} 
+                        style={{ background: 'red', color: 'white', border: 'none', padding: '5px 10px', cursor: 'pointer', marginLeft: '10px' }}
+                    >
+                        삭제
+                    </button>
+                )}
+            </li>
+        ))}
+    </ul>
+) : (
+    <p>{isLoggedIn ? '현재 즐겨찾기에 추가된 대여소가 없습니다.' : '즐겨찾기 목록을 보려면 로그인해 주세요.'}</p>
+)}
           </div>
         </div>
       )}
 
       <footer className="footer">
-        {activeTab === 'map' && (
-            <div className="time-display">12 min</div>
-        )}
-        
         {/* 하단 버튼 4개 (중앙 버튼 자리 비움) */}
         <div className="nav-buttons">
           {/* 1. MY 버튼 */}
