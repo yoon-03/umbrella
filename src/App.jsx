@@ -44,6 +44,8 @@ const MapComponent = () => {
   const [centerPosition, setCenterPosition] = useState(null);
   //즐겨찾기 삭제를 위해 추가
   const [isDeleteMode, setIsDeleteMode] = useState(false);
+  //유저 위치 정보를 위해 추가
+  const [userLocation, setUserLocation] = useState(null);
 
   const toggleDeleteMode = () => {
     setIsDeleteMode(prev => !prev);
@@ -330,6 +332,28 @@ const handleRemoveFavorite = async (station) => {
     alert("서버 오류");
   }
 };
+//유저 위치 정보 가져오기
+  const getCurrentLocation = () => {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                // 성공 시, 위치를 [위도, 경도] 배열로 설정
+                setUserLocation([position.coords.latitude, position.coords.longitude]);
+            },
+            (error) => {
+                console.error("Geolocation Error:", error);
+                alert("현재 위치를 가져오는 데 실패했습니다. 위치 권한을 확인해주세요.");
+            },
+            { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 } // 옵션
+        );
+    } else {
+        alert("브라우저가 Geolocation을 지원하지 않습니다.");
+    }
+};
+// 컴포넌트 마운트 시 위치 정보 요청
+useEffect(() => {
+    getCurrentLocation();
+}, []);
 
   // 즐겨찾기 목록 항목 클릭 시 지도 위치로 이동하는 함수
   const handleGoToFavorite = (position) => {
@@ -445,6 +469,22 @@ const handleRemoveFavorite = async (station) => {
           />
           {/* 검색 후 지도이동 */}
           <MapSearchCenterer position={centerPosition} />
+
+          {/* 유저 위치 마커 */}
+          {userLocation && (
+              <Marker position={userLocation} icon={new L.divIcon({ 
+                  className: 'user-location-icon', // 위에서 정의한 CSS 클래스
+                  html: '<i class="fa fa-user"></i>', // Font Awesome 아이콘을 HTML로 삽입 (FaUser 아이콘의 CSS 클래스에 맞게 조정 필요)
+                  iconAnchor: [15, 15], // 마커 중심을 아이콘 중앙에 맞춤 (30px/2)
+                  popupAnchor: [0, -15], // 팝업 위치 조정 (30px/2)
+              })}>
+                  <Popup>
+                      <b>현재 내 위치</b>
+                      <br />
+                      <FaUser style={{ verticalAlign: 'middle', marginRight: '5px' }} />
+                  </Popup>
+              </Marker>
+          )}
 
           {stations.map((station) => (
             <Marker key={station.station_id} position={station.position}>
