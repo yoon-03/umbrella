@@ -1,26 +1,19 @@
 // server.js
-
-// 1. 환경 변수 로드
 require('dotenv').config();
-
-// 2. 패키지 로드
 const express = require('express');
 const mysql = require('mysql2');
-const app = express();
-const port = 4000;
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 
-// ✅ JSON 파싱
+const app = express();
+const port = 4000;
+
+// 미들웨어
 app.use(express.json());
+app.use(cors({ origin: 'http://localhost:3000', credentials: true }));
 
-app.use(cors({
-    origin: 'http://localhost:3000',
-    credentials: true
-}));
-
-// ✅ MySQL Pool
+// DB Pool 설정
 const db = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
@@ -32,276 +25,241 @@ const db = mysql.createPool({
     queueLimit: 0
 });
 
-// ✅ 연결 테스트
+// DB 연결 확인
 db.getConnection((err, conn) => {
-    if (err) {
-        console.error('MySQL 연결 실패:', err.message);
-        return;
+    if (err) console.error('MySQL 연결 실패:', err.message);
+    else {
+        console.log('✅ MySQL 연결 성공!');
+        conn.release();
     }
-    console.log('✅ MySQL 연결 성공!');
-    conn.release();
 });
 
-app.get('/', (req, res) => {
-    res.send('API Server is running.');
-});
-
-
-// ✅ JWT 인증 미들웨어
+// --- 미들웨어: JWT 인증 ---
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
+    if (!token) return res.status(401).json({ error: '토큰 누락' });
 
-
-    if (!token) {
-        return res.status(401).json({ error: '인증 토큰이 누락되었습니다.' });
-    }
     jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-        if (err) {
-            return res.status(403).json({ error: '토큰이 유효하지 않거나 만료되었습니다.' });
-        }
-
-        req.userId = user.id; // ✅ user_id가 들어있음
+        if (err) return res.status(403).json({ error: '토큰 만료/유효하지 않음' });
+        req.userId = user.id;
         next();
     });
 };
 
+// --- 1. 인증 (Auth) ---
 
-// ✅ 회원가입 라우트
+// 회원가입
 app.post('/api/auth/signup', (req, res) => {
     const { email, password, phonenumber, nickname } = req.body;
-
-    if (!email || !password) {
-        return res.status(400).json({ error: '필수 정보를 입력해주세요.' });
-    }
+    if (!email || !password) return res.status(400).json({ error: '필수 정보 누락' });
 
     bcrypt.hash(password, 10, (err, hashedPassword) => {
-        if (err) {
-            console.error('Hash Error:', err);
-            return res.status(500).json({ error: '비밀번호 해싱 오류' });
-        }
+        if (err) return res.status(500).json({ error: '암호화 오류' });
 
-        const insertQuery = `
-            INSERT INTO user (user_id, password, nickname, phonenumber, email)
-            VALUES (?, ?, ?, ?, ?)
-        `;
-
-        db.query(insertQuery, [email, hashedPassword, nickname, phonenumber, email], (err) => {
+        const query = `INSERT INTO user (user_id, password, nickname, phonenumber, email) VALUES (?, ?, ?, ?, ?)`;
+        db.query(query, [email, hashedPassword, nickname, phonenumber, email], (err) => {
             if (err) {
-                if (err.errno === 1062) {
-                    return res.status(409).json({ error: '이미 존재하는 사용자입니다.' });
-                }
-                console.error('Signup DB Error:', err);
-                return res.status(500).json({ error: '회원가입 중 DB 오류' });
+                if (err.errno === 1062) return res.status(409).json({ error: '이미 존재하는 ID' });
+                return res.status(500).json({ error: 'DB 오류' });
             }
-
-            // ✅ 실제 JWT 생성
-            const token = jwt.sign(
-                { id: email }, 
-                process.env.JWT_SECRET, 
-                { expiresIn: '1h' }
-            );
-
-            res.status(201).json({
-                message: '회원가입 성공',
-                token: token
-            });
+            const token = jwt.sign({ id: email }, process.env.JWT_SECRET, { expiresIn: '1h' });
+            res.status(201).json({ message: '회원가입 성공', token });
         });
     });
 });
 
-// ✅ 즐겨찾기
-app.post('/api/favorites', authenticateToken, (req, res) => {
-    const userId = req.userId;   // JWT에서 추출한 user_id
-    const { station_id } = req.body;
+// 로그인
+app.post('/api/auth/login', (req, res) => {
+    const { email, password } = req.body;
+    db.query(`SELECT user_id, password FROM user WHERE user_id = ?`, [email], async (err, results) => {
+        if (err) return res.status(500).json({ error: 'DB 오류' });
+        if (results.length === 0) return res.status(401).json({ error: '계정 없음' });
 
-    if (!station_id) {
-        return res.status(400).json({ error: "station_id가 필요합니다." });
-    }
+        const user = results[0];
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) return res.status(401).json({ error: '비밀번호 불일치' });
 
-    const query = `
-        INSERT INTO bookmark (user_id, station_id)
-        VALUES (?, ?)
-    `;
-
-    db.query(query, [userId, station_id], (err) => {
-        if (err) {
-            if (err.errno === 1062) {
-                return res.status(409).json({ error: "이미 즐겨찾기에 추가된 대여소입니다." });
-            }
-            console.error("즐겨찾기 추가 DB 오류:", err);
-            return res.status(500).json({ error: "즐겨찾기 추가 중 오류 발생" });
-        }
-
-        res.json({ message: "즐겨찾기에 추가되었습니다." });
+        const token = jwt.sign({ id: user.user_id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+        res.json({ message: '로그인 성공', token });
     });
 });
 
+// --- 2. 사용자 및 대여소 (User & Station) ---
 
-// ✅ 즐겨찾기 정보 가져오기
-app.get('/api/favorites', authenticateToken, (req, res) => {
-    const userId = req.userId;
-
+// 사용자 정보 조회
+app.get('/api/user', authenticateToken, (req, res) => {
     const query = `
-        SELECT 
-            b.station_id,
-            s.name AS station_name,
-            s.lat AS latitude,
-            s.lng AS longitude
-        FROM bookmark b
-        JOIN station s ON b.station_id = s.station_id
-        WHERE b.user_id = ?
+        SELECT u.email, u.nickname, u.phonenumber,
+        (SELECT umbrella_id FROM umbrella_rental_service 
+         WHERE user_id = u.user_id AND return_time IS NULL 
+         ORDER BY rent_time DESC LIMIT 1) AS current_rental_id
+        FROM user u WHERE u.user_id = ?
     `;
+    db.query(query, [req.userId], (err, results) => {
+        if (err) return res.status(500).json({ error: 'DB 오류' });
+        if (results.length === 0) return res.status(404).json({ error: '사용자 없음' });
+        res.json(results[0]);
+    });
+});
 
-    db.query(query, [userId], (err, results) => {
-        if (err) {
-            console.error("즐겨찾기 조회 오류:", err);
-            return res.status(500).json({ error: "즐겨찾기 조회 실패" });
-        }
+// 대여소 목록 조회 (지역 검색 포함)
+app.get('/api/stations', (req, res) => {
+    const region = req.query.region;
+    let query = 'SELECT * FROM station';
+    let params = [];
+    if (region) {
+        query += ' WHERE region = ?';
+        params.push(region);
+    }
+    db.query(query, params, (err, results) => {
+        if (err) return res.status(500).json({ error: 'DB 오류' });
         res.json(results);
     });
 });
 
-// ✅ 로그인 라우트
-app.post('/api/auth/login', (req, res) => {
-    const { email, password } = req.body;
+// --- 3. 즐겨찾기 (Favorites) ---
 
-    if (!email || !password) {
-        return res.status(400).json({ error: '아이디와 비밀번호를 입력해주세요.' });
-    }
-
-    const query = `
-        SELECT user_id, password
-        FROM user
-        WHERE user_id = ?
-    `;
-
-    db.query(query, [email], async (err, results) => {
+app.post('/api/favorites', authenticateToken, (req, res) => {
+    const { station_id } = req.body;
+    db.query(`INSERT INTO bookmark (user_id, station_id) VALUES (?, ?)`, [req.userId, station_id], (err) => {
         if (err) {
-            console.error('Login DB Error:', err.message);
-            return res.status(500).json({ error: '로그인 DB 오류' });
+            if (err.errno === 1062) return res.status(409).json({ error: '이미 추가됨' });
+            return res.status(500).json({ error: 'DB 오류' });
+        }
+        res.json({ message: '추가됨' });
+    });
+});
+
+app.get('/api/favorites', authenticateToken, (req, res) => {
+    const query = `
+        SELECT b.station_id, s.name AS station_name, s.lat AS latitude, s.lng AS longitude
+        FROM bookmark b JOIN station s ON b.station_id = s.station_id
+        WHERE b.user_id = ?
+    `;
+    db.query(query, [req.userId], (err, results) => {
+        if (err) return res.status(500).json({ error: 'DB 오류' });
+        res.json(results);
+    });
+});
+
+app.delete('/api/favorites', authenticateToken, (req, res) => {
+    const station_id = req.query.station_id;
+    db.query(`DELETE FROM bookmark WHERE user_id = ? AND station_id = ?`, [req.userId, station_id], (err, result) => {
+        if (err) return res.status(500).json({ error: 'DB 오류' });
+        res.json({ message: '삭제됨' });
+    });
+});
+
+// --- 4. 대여 및 반납 (Rental - Transaction) ---
+
+// 대여 가능한 우산 목록
+app.get('/api/stations/:station_id/umbrella', authenticateToken, (req, res) => {
+    db.query(`SELECT umbrella_id, status FROM umbrella WHERE station_id = ? AND status = 'available'`, 
+    [req.params.station_id], (err, results) => {
+        if (err) return res.status(500).json({ error: 'DB 오류' });
+        res.json(results);
+    });
+});
+
+// ✅ 우산 대여 (Async Transaction)
+app.post('/api/rental/rent', authenticateToken, async (req, res) => {
+    const { station_id, umbrella_id } = req.body;
+    if (!station_id || !umbrella_id) return res.status(400).json({ error: '정보 누락' });
+
+    let connection;
+    try {
+        connection = await db.promise().getConnection();
+        await connection.beginTransaction();
+
+        // 1. 상태 확인
+        const [check] = await connection.query(
+            `SELECT status FROM umbrella WHERE umbrella_id = ? FOR UPDATE`, [umbrella_id]
+        );
+        if (check.length === 0 || check[0].status !== 'available') {
+            throw new Error('대여 불가능한 우산입니다.');
         }
 
-        if (results.length === 0) {
-            return res.status(401).json({ error: '존재하지 않는 계정입니다.' });
-        }
-
-        const user = results[0];
-
-        // ✅ 비밀번호 비교
-        const isMatch = await bcrypt.compare(password, user.password);
-
-        if (!isMatch) {
-            return res.status(401).json({ error: '비밀번호가 일치하지 않습니다.' });
-        }
-
-        // ✅ 정상 JWT 발급 (user.user_id 사용)
-        const token = jwt.sign(
-            { id: user.user_id }, 
-            process.env.JWT_SECRET,
-            { expiresIn: '1h' }
+        // 2. 우산 업데이트 (위치: NULL, 상태: rented)
+        await connection.query(
+            `UPDATE umbrella SET status = 'rented', station_id = NULL, last_user_id = ? WHERE umbrella_id = ?`,
+            [req.userId, umbrella_id]
         );
 
-        res.json({
-            message: '로그인 성공',
-            token: token
-        });
-    });
-});
+        // 3. 이력 생성
+        await connection.query(
+            `INSERT INTO umbrella_rental_service (user_id, station_id, umbrella_id, rent_time) VALUES (?, ?, ?, NOW())`,
+            [req.userId, station_id, umbrella_id]
+        );
 
+        await connection.commit();
+        res.json({ message: '대여 성공' });
 
-// ✅ 사용자 정보 조회
-app.get('/api/user', authenticateToken, (req, res) => {
-    const userId = req.userId;
-
-    const query = `
-        SELECT email, nickname, phonenumber
-        FROM user
-        WHERE user_id = ?
-    `;
-
-    db.query(query, [userId], (err, results) => {
-        if (err) {
-            console.error('User Fetch Error:', err);
-            return res.status(500).json({ error: '사용자 조회 오류' });
-        }
-
-        if (results.length === 0) {
-            return res.status(404).json({ error: '사용자를 찾을 수 없습니다.' });
-        }
-
-        const user = results[0];
-
-        res.json({
-            email: user.email,
-            nickname: user.nickname || '익명 사용자',
-            phonenumber: user.phonenumber
-        });
-    });
-});
-
-
-// ✅ 대여소 조회
-app.get('/api/stations', (req, res) => {
-    const region = req.query.region; // 쿼리 파라미터에서 region 값을 추출
-    
-    let query = 'SELECT * FROM station';
-    let params = [];
-
-    // region 값이 있을 경우 WHERE 절 추가
-    if (region) {
-        //  일치하는 지역을 찾습니다.
-        query += ' WHERE region = ?';
-        params.push(region);
+    } catch (error) {
+        if (connection) await connection.rollback();
+        console.error('Rent Error:', error.message);
+        res.status(400).json({ error: error.message });
+    } finally {
+        if (connection) connection.release();
     }
-    
-    // ✅ 쿼리 실행
-    db.query(query, params, (err, results) => {
-        if (err) {
-            console.error('Station Fetch DB Error:', err); 
-            return res.status(500).json({ error: 'DB 조회 오류' });
-        }
-         res.json(results);
-    });
 });
 
-// ✅ 즐겨찾기 삭제 (DELETE)
-app.delete('/api/favorites', authenticateToken, (req, res) => {
-    const userId = req.userId; // JWT에서 추출한 user_id
-    // DELETE 요청은 쿼리 파라미터를 이용해서
-    const station_id = req.query.station_id ? req.query.station_id.trim() : null;
-    // 1. station_id 누락 여부 확인 (클라이언트 측 오류 방지)
-    if (!station_id) {
-        return res.status(400).json({ error: "station_id가 필요합니다." });
-    }
+// ✅ 우산 반납 (Async Transaction + 강제 반납 로직)
+app.post('/api/rental/return', authenticateToken, async (req, res) => {
+    const { station_id, umbrella_id } = req.body;
+    if (!station_id || !umbrella_id) return res.status(400).json({ error: '정보 누락' });
 
-    const deleteQuery = `
-        DELETE FROM bookmark 
-        WHERE user_id = ? AND station_id = ?
-    `;
+    let connection;
+    try {
+        connection = await db.promise().getConnection();
+        await connection.beginTransaction();
 
-    // 2. DB 삭제 쿼리 실행
-    db.query(deleteQuery, [userId, station_id], (err, result) => {
-        if (err) {
-            console.error("즐겨찾기 삭제 DB 오류:", err);
-            return res.status(500).json({ error: "즐겨찾기 삭제 중 오류 발생" });
+        // 1. 이력 확인 (가장 최근 대여 기록)
+        const [history] = await connection.query(
+            `SELECT rent_id FROM umbrella_rental_service 
+             WHERE umbrella_id = ? AND return_time IS NULL 
+             ORDER BY rent_time DESC LIMIT 1 FOR UPDATE`,
+            [umbrella_id]
+        );
+
+        let rentId = null;
+        if (history.length > 0) {
+            rentId = history[0].rent_id;
+            // 이력 업데이트 (반납 처리)
+            await connection.query(
+                `UPDATE umbrella_rental_service SET return_time = NOW(), station_id = ? WHERE rent_id = ?`,
+                [station_id, rentId]
+            );
+        } else {
+            console.log("⚠️ 대여 기록 누락됨. 우산 상태 강제 변경 시도.");
         }
 
-        // 3. 삭제 결과 확인
-        if (result.affectedRows === 0) {
-            // 삭제할 항목이 없는 경우
-            return res.status(404).json({ error: "해당 즐겨찾기 항목을 찾을 수 없습니다." });
-        }
-
-        // 4. 성공 응답
-        res.json({ message: "즐겨찾기에서 삭제되었습니다." });
-
+        // 2. 우산 상태 확인 및 업데이트
+        const [umbrella] = await connection.query(`SELECT status FROM umbrella WHERE umbrella_id = ?`, [umbrella_id]);
         
-    });
+        // 이미 반납된 상태이고, 이력도 없으면 진짜 에러
+        if (umbrella[0].status === 'available' && !rentId) {
+            throw new Error('이미 반납된 우산입니다.');
+        }
+
+        // 우산 업데이트 (위치: 반납소, 상태: available)
+        await connection.query(
+            `UPDATE umbrella SET status = 'available', station_id = ? WHERE umbrella_id = ?`,
+            [station_id, umbrella_id]
+        );
+
+        await connection.commit();
+        res.json({ message: '반납 성공' });
+
+    } catch (error) {
+        if (connection) await connection.rollback();
+        console.error('Return Error:', error.message);
+        res.status(400).json({ error: error.message });
+    } finally {
+        if (connection) connection.release();
+    }
 });
 
-
-// ✅ 서버 실행
 app.listen(port, () => {
-    console.log(`🚀 서버가 http://localhost:${port} 에서 실행 중`);
+    console.log(`🚀 Server running on port ${port}`);
 });
