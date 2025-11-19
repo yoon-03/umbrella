@@ -7,9 +7,9 @@
 | 분류 | 기술 (Stack) |
 | :--- | :--- |
 | **Frontend** | React Native (JavaScript) |
-| **Backend** | Node.js, Express.js |
+| **Backend** | Node.js |
 | **Database** | MySQL |
-| **Tool / IDE** | Visual Studio Code, Android Studio |
+| **Tool / IDE** | Visual Studio Code, Android Studio, MySQL Workbench |
 
 ## ✨ Key Features
 
