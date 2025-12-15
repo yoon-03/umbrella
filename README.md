@@ -23,7 +23,10 @@
 * **2025.08.27 ~ 2025.12.15** (총 16주)
 
 ### 🗺️ 메인 화면
-![Map Screen](main.png)
+![Map Screen](Screenshot/main.png)
+
+### ERD 사진
+![ERD Screen](ScreenShot/ERD.png)
 
 개발팀 (Team)
 박계윤 (202244041) - Backend, Database 
