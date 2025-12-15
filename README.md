@@ -21,3 +21,7 @@
 
 ## 📅 Project Period
 * **2025.08.27 ~ 2025.12.15** (총 16주)
+
+개발팀 (Team)
+박계윤 (202244041) - Backend, Database 
+김형철 (202244090) - Frontend, UI/UX Design
