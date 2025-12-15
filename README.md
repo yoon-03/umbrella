@@ -26,7 +26,8 @@
 ![Map Screen](Screenshot/main.png)
 
 ### ERD 사진
-![ERD Screen](Screenshot/ERD.png)
+![ERD Screen](Screenshot/DB.png)
+
 본 서비스의 핵심 데이터 구조는 사용자(User), 우산(Umbrella), 대여소(Station), 즐겨찾기(Favorite) 엔티티로 구성되어 있으며,
 이들을 연결하는 중심 테이블로 **대여 서비스(Umbrella_Rental_Service)**를 설계하였습니다.
 
